@@ -11,11 +11,12 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from streamlit_autorefresh import st_autorefresh
+import os
 
 st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 
 # ==================== REFRESCO AUTOMÁTICO DE GRÁFICAS ====================
-st_autorefresh(interval=60000, key="datarefresh")   # Actualiza cada 60 segundos
+st_autorefresh(interval=60000, key="datarefresh")
 
 # ==================== DESCRIPCIÓN Y AUTORES ====================
 with st.expander("ℹ️ Acerca de este sistema", expanded=True):
@@ -35,10 +36,10 @@ with st.expander("ℹ️ Acerca de este sistema", expanded=True):
 st.title("🚰 Monitoreo Inteligente de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual autorizado: 15 m³** (3 m³ por persona)")
 
-# Configuración
+# ==================== CONFIGURACIÓN (CORREGIDA) ====================
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
-APP_PASSWORD = st.secrets.get("APP_PASSWORD", "lvchktwnenwvgdje")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "lvchktwnenwvgdje")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
@@ -52,7 +53,7 @@ if 'consumo_actual' not in st.session_state:
     st.session_state.hist_mse = []
     st.session_state.last_check = None
 
-# Función de alerta por email
+# Función de alerta
 def enviar_alerta(mse):
     try:
         msg = MIMEMultipart()
@@ -76,7 +77,7 @@ Por favor revise las tuberías urgentemente.
     except Exception as e:
         st.error(f"Error al enviar correo: {e}")
 
-# Hilo de monitoreo (actualiza datos y gráficas en tiempo real)
+# Hilo de monitoreo
 def monitoreo_background():
     try:
         model = load_model('modelo_anomalias_agua.h5', compile=False)
@@ -98,7 +99,7 @@ def monitoreo_background():
 
             if len(consumption) >= 288:
                 last_seq = consumption[-288:].values.reshape(1, 288, 1)
-                last_scaled = scaler.transform(last_seq.reshape(-1, 1)).reshape(1, 288, 1)  # ← Asegúrate de cargar scaler
+                last_scaled = scaler.transform(last_seq.reshape(-1, 1)).reshape(1, 288, 1)
 
                 pred = model.predict(last_scaled, verbose=0)
                 mse = np.mean(np.power(last_scaled - pred, 2))
@@ -114,7 +115,7 @@ def monitoreo_background():
                     st.session_state.hist_consumo.pop(0)
                     st.session_state.hist_mse.pop(0)
 
-                if mse > threshold:          # ← Define threshold
+                if mse > threshold:
                     enviar_alerta(mse)
                     st.session_state.estado = "¡ALERTA DE FUGA!"
                 else:
@@ -125,18 +126,17 @@ def monitoreo_background():
 
         time.sleep(60)
 
-# Iniciar hilo solo una vez
+# Iniciar hilo
 if 'monitoreo_started' not in st.session_state:
     threading.Thread(target=monitoreo_background, daemon=True).start()
     st.session_state.monitoreo_started = True
 
-# ==================== DASHBOARD ====================
+# Dashboard
 col1, col2, col3 = st.columns(3)
 col1.metric("Consumo acumulado", f"{st.session_state.consumo_actual:.2f} m³", f"{st.session_state.porcentaje:.1f}% del límite")
 col2.metric("Estado del sistema", st.session_state.estado)
 col3.metric("Último chequeo", st.session_state.last_check.strftime('%H:%M:%S') if st.session_state.last_check else "Cargando...")
 
-# Gráficas (se actualizan automáticamente cada 60 segundos)
 if st.session_state.hist_consumo:
     fig_consumo = go.Figure()
     fig_consumo.add_trace(go.Scatter(y=st.session_state.hist_consumo, mode='lines+markers', name='Consumo (m³)', line=dict(color='blue')))
@@ -146,7 +146,7 @@ if st.session_state.hist_consumo:
 
     fig_mse = go.Figure()
     fig_mse.add_trace(go.Scatter(y=st.session_state.hist_mse, mode='lines+markers', name='Error MSE', line=dict(color='red')))
-    fig_mse.update_layout(title="Error MSE en Tiempo Real (Detección de anomalías)", xaxis_title="Chequeos recientes", yaxis_title="MSE")
+    fig_mse.update_layout(title="Error MSE en Tiempo Real", xaxis_title="Chequeos recientes", yaxis_title="MSE")
     st.plotly_chart(fig_mse, use_container_width=True)
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Actualización automática cada 60 segundos • Render.com")
@@ -154,3 +154,4 @@ st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y
 if st.button("Enviar alerta de prueba"):
     enviar_alerta(0.5)
     st.success("Correo de prueba enviado")
+
