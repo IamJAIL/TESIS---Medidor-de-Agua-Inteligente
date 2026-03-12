@@ -14,10 +14,10 @@ from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 
-# Refrescar automáticamente cada 60 segundos
-st_autorefresh(interval=60000, key="datarefresh")
+# ==================== REFRESCO AUTOMÁTICO DE GRÁFICAS ====================
+st_autorefresh(interval=60000, key="datarefresh")   # Actualiza cada 60 segundos
 
-# ==================== DESCRIPCIÓN DEL PROYECTO Y AUTORES ====================
+# ==================== DESCRIPCIÓN Y AUTORES ====================
 with st.expander("ℹ️ Acerca de este sistema", expanded=True):
     st.markdown("""
     **Sistema de monitoreo y análisis de consumo de agua potable residencial**  
@@ -25,25 +25,24 @@ with st.expander("ℹ️ Acerca de este sistema", expanded=True):
     **Internet de las Cosas (IoT)** e **Inteligencia Artificial (IA)**, orientado a la reducción  
     de consumos anómalos y al uso eficiente del recurso hídrico a nivel doméstico.
     
-    **Autores:**
-    - Camilo Quinto
-    - José Insuasti
-    - Paul Palma
+    **Autores:**  
+    - Camilo Quinto  
+    - José Insuasti  
+    - Paul Palma  
     - Milton Simbaña
     """)
 
 st.title("🚰 Monitoreo Inteligente de Consumo de Agua - Residencia Quito")
-
 st.markdown("**Hogar: 5 personas** | **Límite mensual autorizado: 15 m³** (3 m³ por persona)")
 
-# Configuración de email (usa secrets en Render para seguridad)
+# Configuración
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
 APP_PASSWORD = st.secrets.get("APP_PASSWORD", "lvchktwnenwvgdje")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
-# Inicializar estado si no existe
+# Variables de estado
 if 'consumo_actual' not in st.session_state:
     st.session_state.consumo_actual = 0.0
     st.session_state.porcentaje = 0.0
@@ -53,31 +52,31 @@ if 'consumo_actual' not in st.session_state:
     st.session_state.hist_mse = []
     st.session_state.last_check = None
 
-# Función para enviar alerta por email
+# Función de alerta por email
 def enviar_alerta(mse):
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
         msg['Subject'] = f"🚨 Alerta: Posible fuga de agua - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        body = f"""Se ha detectado un consumo anómalo en la vivienda.
+        body = f"""Se ha detectado un consumo anómalo.
 
-MSE detectado: {mse:.6f}
-Consumo actual: {st.session_state.consumo_actual:.2f} m³ ({st.session_state.porcentaje:.1f}% del límite mensual)
+MSE: {mse:.6f}
+Consumo actual: {st.session_state.consumo_actual:.2f} m³ ({st.session_state.porcentaje:.1f}% del límite)
 Fecha/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-Por favor, revise las tuberías urgentemente.
+Por favor revise las tuberías urgentemente.
 """
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(EMAIL_FROM, APP_PASSWORD)
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
-        st.success("Alerta enviada por correo electrónico")
+        st.success("✅ Alerta enviada por correo electrónico")
     except Exception as e:
         st.error(f"Error al enviar correo: {e}")
 
-# Hilo de monitoreo en background
+# Hilo de monitoreo (actualiza datos y gráficas en tiempo real)
 def monitoreo_background():
     try:
         model = load_model('modelo_anomalias_agua.h5', compile=False)
@@ -105,7 +104,7 @@ def monitoreo_background():
                 mse = np.mean(np.power(last_scaled - pred, 2))
 
                 st.session_state.mse_actual = mse
-                st.session_state.consumo_actual = series.iloc[-1] / 1000  # a m³
+                st.session_state.consumo_actual = series.iloc[-1] / 1000
                 st.session_state.porcentaje = (st.session_state.consumo_actual / 15) * 100
                 st.session_state.hist_consumo.append(st.session_state.consumo_actual)
                 st.session_state.hist_mse.append(mse)
@@ -115,7 +114,7 @@ def monitoreo_background():
                     st.session_state.hist_consumo.pop(0)
                     st.session_state.hist_mse.pop(0)
 
-                if mse > threshold:  # ← Define threshold o calcúlalo
+                if mse > threshold:          # ← Define threshold
                     enviar_alerta(mse)
                     st.session_state.estado = "¡ALERTA DE FUGA!"
                 else:
@@ -126,18 +125,18 @@ def monitoreo_background():
 
         time.sleep(60)
 
-# Iniciar monitoreo solo una vez
+# Iniciar hilo solo una vez
 if 'monitoreo_started' not in st.session_state:
     threading.Thread(target=monitoreo_background, daemon=True).start()
     st.session_state.monitoreo_started = True
 
-# Dashboard
+# ==================== DASHBOARD ====================
 col1, col2, col3 = st.columns(3)
 col1.metric("Consumo acumulado", f"{st.session_state.consumo_actual:.2f} m³", f"{st.session_state.porcentaje:.1f}% del límite")
 col2.metric("Estado del sistema", st.session_state.estado)
 col3.metric("Último chequeo", st.session_state.last_check.strftime('%H:%M:%S') if st.session_state.last_check else "Cargando...")
 
-# Gráficas interactivas
+# Gráficas (se actualizan automáticamente cada 60 segundos)
 if st.session_state.hist_consumo:
     fig_consumo = go.Figure()
     fig_consumo.add_trace(go.Scatter(y=st.session_state.hist_consumo, mode='lines+markers', name='Consumo (m³)', line=dict(color='blue')))
@@ -150,9 +149,8 @@ if st.session_state.hist_consumo:
     fig_mse.update_layout(title="Error MSE en Tiempo Real (Detección de anomalías)", xaxis_title="Chequeos recientes", yaxis_title="MSE")
     st.plotly_chart(fig_mse, use_container_width=True)
 
-st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Actualización automática cada 60 segundos • Desplegado en Render.com")
+st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Actualización automática cada 60 segundos • Render.com")
 
-# Botón de prueba
-if st.button("Enviar alerta de prueba por correo"):
+if st.button("Enviar alerta de prueba"):
     enviar_alerta(0.5)
     st.success("Correo de prueba enviado")
