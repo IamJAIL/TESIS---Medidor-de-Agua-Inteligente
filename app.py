@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from tensorflow.keras.models import load_model
 from tensorflow.keras.losses import MeanSquaredError
@@ -41,46 +41,61 @@ url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME
 
 # Variables de estado
 if 'consumo_actual' not in st.session_state:
-    st.session_state.consumo_actual = 0.0
-    st.session_state.porcentaje = 0.0
+    st.session_state.consumo_actual = 0.0           # consumo total histórico (litros)
+    st.session_state.consumo_mensual = 0.0          # consumo solo del mes actual (litros)
+    st.session_state.porcentaje_mensual = 0.0
     st.session_state.mse_actual = 0.0
     st.session_state.estado = "Cargando datos..."
-    st.session_state.hist_consumo = []
+    st.session_state.hist_consumo = []              # histórico general
     st.session_state.hist_mse = []
     st.session_state.last_check = None
+    st.session_state.error_msg = ""
 
 # Función de alerta
-def enviar_alerta(mse):
+def enviar_alerta(mse, tipo="fuga"):
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
-        msg['Subject'] = f"🚨 Alerta: Posible fuga de agua - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        body = f"""Se ha detectado un consumo anómalo.
+        if tipo == "fuga":
+            subject = f"🚨 Alerta: Posible fuga de agua - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            body = f"""Se ha detectado un consumo anómalo (posible fuga).
 
 MSE: {mse:.6f}
-Consumo actual: {st.session_state.consumo_actual:.2f} m³ ({st.session_state.porcentaje:.1f}% del límite)
+Consumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}% del límite)
 Fecha/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-Por favor revise las tuberías urgentemente.
+Revise las tuberías urgentemente.
 """
+        else:  # alerta por límite mensual
+            subject = f"⚠️ Alerta: Consumo mensual alto - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            body = f"""El consumo mensual está cerca del límite autorizado.
+
+Consumo actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}% del límite 15 m³)
+Fecha/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Recomendamos revisar el uso del agua.
+"""
+        msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(EMAIL_FROM, APP_PASSWORD)
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
-        st.success("✅ Alerta enviada por correo electrónico")
+        st.success("Alerta enviada")
     except Exception as e:
-        st.error(f"Error al enviar correo: {e}")
+        st.error(f"Error correo: {e}")
 
-# Hilo de monitoreo (actualiza datos cada 60 segundos)
+# Hilo de monitoreo
 def monitoreo_background():
+    st.session_state.estado = "Iniciando monitoreo..."
     try:
         model = load_model('modelo_anomalias_agua.h5', compile=False)
         model.compile(optimizer='adam', loss=MeanSquaredError())
-        st.session_state.estado = "Modelo cargado correctamente"
+        st.session_state.estado = "Modelo cargado"
     except Exception as e:
-        st.session_state.estado = f"Error cargando modelo: {e}"
+        st.session_state.error_msg = f"Error modelo: {str(e)}"
+        st.session_state.estado = "Fallo en modelo"
         return
 
     while True:
@@ -100,10 +115,28 @@ def monitoreo_background():
                 pred = model.predict(last_scaled, verbose=0)
                 mse = np.mean(np.power(last_scaled - pred, 2))
 
+                # Consumo total histórico
+                st.session_state.consumo_actual = series.iloc[-1]
+
+                # Consumo mensual (solo desde inicio del mes)
+                today = datetime.now()
+                first_day_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                df_month = series[series.index >= first_day_month]
+                if not df_month.empty:
+                    consumo_mensual_litros = df_month.iloc[-1] - df_month.iloc[0] if len(df_month) > 1 else df_month.iloc[-1]
+                    st.session_state.consumo_mensual = consumo_mensual_litros
+                    st.session_state.porcentaje_mensual = (consumo_mensual_litros / 15000) * 100  # 15 m³ = 15000 litros
+
+                    # Alerta preventiva por límite mensual (90%)
+                    if st.session_state.porcentaje_mensual > 90:
+                        enviar_alerta(mse, tipo="limite")
+                else:
+                    st.session_state.consumo_mensual = 0.0
+                    st.session_state.porcentaje_mensual = 0.0
+
+                # Actualizar históricos
                 st.session_state.mse_actual = mse
-                st.session_state.consumo_actual = series.iloc[-1] / 1000
-                st.session_state.porcentaje = (st.session_state.consumo_actual / 15) * 100
-                st.session_state.hist_consumo.append(st.session_state.consumo_actual)
+                st.session_state.hist_consumo.append(st.session_state.consumo_actual / 1000)  # en m³
                 st.session_state.hist_mse.append(mse)
                 st.session_state.last_check = datetime.now()
 
@@ -112,13 +145,14 @@ def monitoreo_background():
                     st.session_state.hist_mse.pop(0)
 
                 if mse > threshold:
-                    enviar_alerta(mse)
+                    enviar_alerta(mse, tipo="fuga")
                     st.session_state.estado = "¡ALERTA DE FUGA!"
                 else:
                     st.session_state.estado = "Normal"
 
         except Exception as e:
-            st.session_state.estado = f"Error en chequeo: {str(e)}"
+            st.session_state.error_msg = f"Error en chequeo: {str(e)}"
+            st.session_state.estado = "Error en ejecución"
 
         time.sleep(60)
 
@@ -127,23 +161,32 @@ if 'monitoreo_started' not in st.session_state:
     threading.Thread(target=monitoreo_background, daemon=True).start()
     st.session_state.monitoreo_started = True
 
-# ==================== DASHBOARD ====================
+# Dashboard
 col1, col2, col3 = st.columns(3)
-col1.metric("Consumo acumulado", f"{st.session_state.consumo_actual:.2f} m³", f"{st.session_state.porcentaje:.1f}% del límite")
+col1.metric("Consumo mensual actual", f"{st.session_state.consumo_mensual/1000:.2f} m³", f"{st.session_state.porcentaje_mensual:.1f}% del límite")
 col2.metric("Estado del sistema", st.session_state.estado)
-col3.metric("Último chequeo", st.session_state.last_check.strftime('%H:%M:%S') if st.session_state.last_check else "Cargando...")
+col3.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M') if st.session_state.last_check else "Cargando...")
 
-# Gráficas (se actualizan al hacer clic en el botón o refrescar página)
+if st.session_state.error_msg:
+    st.error(st.session_state.error_msg)
+
+# Gráficas
 if st.session_state.hist_consumo:
     fig_consumo = go.Figure()
-    fig_consumo.add_trace(go.Scatter(y=st.session_state.hist_consumo, mode='lines+markers', name='Consumo (m³)', line=dict(color='blue')))
-    fig_consumo.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
-    fig_consumo.update_layout(title="Consumo Acumulado en Tiempo Real", xaxis_title="Chequeos recientes", yaxis_title="m³")
+    fig_consumo.add_trace(go.Scatter(y=st.session_state.hist_consumo, mode='lines+markers', name='Consumo acumulado (m³)', line=dict(color='blue')))
+    fig_consumo.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite mensual 15 m³")
+    fig_consumo.update_layout(title="Consumo Acumulado Histórico (m³)", xaxis_title="Chequeos", yaxis_title="m³")
     st.plotly_chart(fig_consumo, use_container_width=True)
+
+    fig_mensual = go.Figure()
+    fig_mensual.add_trace(go.Bar(x=["Mes actual"], y=[st.session_state.consumo_mensual/1000], name='Consumo mensual', marker_color='royalblue'))
+    fig_mensual.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
+    fig_mensual.update_layout(title="Consumo del Mes Actual", yaxis_title="m³")
+    st.plotly_chart(fig_mensual, use_container_width=True)
 
     fig_mse = go.Figure()
     fig_mse.add_trace(go.Scatter(y=st.session_state.hist_mse, mode='lines+markers', name='Error MSE', line=dict(color='red')))
-    fig_mse.update_layout(title="Error MSE en Tiempo Real", xaxis_title="Chequeos recientes", yaxis_title="MSE")
+    fig_mse.update_layout(title="Error MSE en Tiempo Real (Detección de anomalías)", xaxis_title="Chequeos", yaxis_title="MSE")
     st.plotly_chart(fig_mse, use_container_width=True)
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
