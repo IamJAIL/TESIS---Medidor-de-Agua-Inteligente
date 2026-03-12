@@ -10,13 +10,9 @@ from tensorflow.keras.losses import MeanSquaredError
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from streamlit_autorefresh import st_autorefresh
 import os
 
 st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
-
-# ==================== REFRESCO AUTOMÁTICO DE GRÁFICAS ====================
-st_autorefresh(interval=60000, key="datarefresh")
 
 # ==================== DESCRIPCIÓN Y AUTORES ====================
 with st.expander("ℹ️ Acerca de este sistema", expanded=True):
@@ -36,7 +32,7 @@ with st.expander("ℹ️ Acerca de este sistema", expanded=True):
 st.title("🚰 Monitoreo Inteligente de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual autorizado: 15 m³** (3 m³ por persona)")
 
-# ==================== CONFIGURACIÓN (CORREGIDA) ====================
+# Configuración
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "lvchktwnenwvgdje")
@@ -77,7 +73,7 @@ Por favor revise las tuberías urgentemente.
     except Exception as e:
         st.error(f"Error al enviar correo: {e}")
 
-# Hilo de monitoreo
+# Hilo de monitoreo (actualiza datos cada 60 segundos)
 def monitoreo_background():
     try:
         model = load_model('modelo_anomalias_agua.h5', compile=False)
@@ -131,12 +127,13 @@ if 'monitoreo_started' not in st.session_state:
     threading.Thread(target=monitoreo_background, daemon=True).start()
     st.session_state.monitoreo_started = True
 
-# Dashboard
+# ==================== DASHBOARD ====================
 col1, col2, col3 = st.columns(3)
 col1.metric("Consumo acumulado", f"{st.session_state.consumo_actual:.2f} m³", f"{st.session_state.porcentaje:.1f}% del límite")
 col2.metric("Estado del sistema", st.session_state.estado)
 col3.metric("Último chequeo", st.session_state.last_check.strftime('%H:%M:%S') if st.session_state.last_check else "Cargando...")
 
+# Gráficas (se actualizan al hacer clic en el botón o refrescar página)
 if st.session_state.hist_consumo:
     fig_consumo = go.Figure()
     fig_consumo.add_trace(go.Scatter(y=st.session_state.hist_consumo, mode='lines+markers', name='Consumo (m³)', line=dict(color='blue')))
@@ -149,9 +146,11 @@ if st.session_state.hist_consumo:
     fig_mse.update_layout(title="Error MSE en Tiempo Real", xaxis_title="Chequeos recientes", yaxis_title="MSE")
     st.plotly_chart(fig_mse, use_container_width=True)
 
-st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Actualización automática cada 60 segundos • Render.com")
+st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
+
+if st.button("🔄 Actualizar datos ahora"):
+    st.rerun()
 
 if st.button("Enviar alerta de prueba"):
     enviar_alerta(0.5)
     st.success("Correo de prueba enviado")
-
