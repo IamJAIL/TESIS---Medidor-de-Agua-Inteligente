@@ -10,38 +10,30 @@ import os
 
 st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 
-# ────────────────────────────────────────────────────────────────
-# INICIALIZACIÓN DE TODAS LAS CLAVES DE SESSION_STATE (AL INICIO)
-# ────────────────────────────────────────────────────────────────
+st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
+st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
+
+# Configuración email
+EMAIL_FROM = 'joshinanlo@gmail.com'
+EMAIL_TO = 'joshinanlo@gmail.com'
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+
+if not APP_PASSWORD:
+    st.error("No se encontró APP_PASSWORD en variables de entorno de Render. Configúrala en Environment → APP_PASSWORD")
+
+url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
+
+# Estado inicial
 if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
-    st.session_state.estado = "Presiona 'Actualizar datos' para comenzar"
+    st.session_state.estado = "Cargando datos del mes..."
     st.session_state.last_check = None
     st.session_state.error_msg = ""
     st.session_state.dias_mes = []
     st.session_state.consumo_por_dia = []
 
-# ────────────────────────────────────────────────────────────────
-# TÍTULO Y DESCRIPCIÓN SUTIL
-# ────────────────────────────────────────────────────────────────
-st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
-st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
-
-st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
-
-# ────────────────────────────────────────────────────────────────
-# CONFIG EMAIL Y URL
-# ────────────────────────────────────────────────────────────────
-EMAIL_FROM = 'joshinanlo@gmail.com'
-EMAIL_TO = 'joshinanlo@gmail.com'
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "lvchktwnenwvgdje")
-
-url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
-
-# ────────────────────────────────────────────────────────────────
-# FUNCIÓN ALERTA
-# ────────────────────────────────────────────────────────────────
+# Función alerta
 def enviar_alerta(tipo="fuga"):
     try:
         msg = MIMEMultipart()
@@ -60,17 +52,13 @@ def enviar_alerta(tipo="fuga"):
         server.login(EMAIL_FROM, APP_PASSWORD)
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
-        st.success("Alerta enviada")
+        st.success("Alerta enviada correctamente")
     except Exception as e:
-        st.error(f"Error correo: {e}")
+        st.error(f"Error al enviar correo: {str(e)}")
 
-# ────────────────────────────────────────────────────────────────
-# FUNCIÓN ACTUALIZAR DATOS (solo al botón)
-# ────────────────────────────────────────────────────────────────
-def actualizar_datos():
-    st.session_state.estado = "Actualizando..."
-    st.session_state.error_msg = ""
-
+# Carga automática al abrir la página
+@st.cache_data(ttl=60)  # Cache 60 segundos para no recargar cada rerun
+def cargar_datos():
     try:
         df = pd.read_csv(url)
         df['timestamp'] = pd.to_datetime(df['date_id'].astype(str) + ' ' + df['start_time'].astype(str), errors='coerce')
@@ -79,7 +67,6 @@ def actualizar_datos():
         df.set_index('timestamp', inplace=True)
         series = df['total_liters'].resample('D').last().ffill()
 
-        # Consumo mensual
         today = datetime.now()
         first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         df_month = series[series.index >= first_day]
@@ -103,29 +90,25 @@ def actualizar_datos():
             st.session_state.consumo_por_dia = []
 
         st.session_state.last_check = datetime.now()
-        st.session_state.estado = "Datos actualizados"
+        st.session_state.estado = "Datos cargados automáticamente"
 
     except Exception as e:
-        st.session_state.error_msg = f"Error: {str(e)}"
-        st.session_state.estado = "Error al actualizar"
+        st.session_state.error_msg = f"Error al cargar datos: {str(e)}"
+        st.session_state.estado = "Error en carga automática"
 
-# ────────────────────────────────────────────────────────────────
-# DASHBOARD Y GRÁFICA
-# ────────────────────────────────────────────────────────────────
+# Cargar datos al inicio (automático)
+cargar_datos()
+
+# Dashboard
 col1, col2 = st.columns(2)
 col1.metric("Consumo mensual actual", f"{st.session_state.consumo_mensual/1000:.2f} m³")
 col2.metric("Porcentaje usado", f"{st.session_state.porcentaje_mensual:.1f}%")
 
 st.metric("Estado", st.session_state.estado)
-st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M') if st.session_state.last_check else "No actualizado")
+st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M') if st.session_state.last_check else "No cargado")
 
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
-
-# Botón principal
-if st.button("🔄 Actualizar datos ahora"):
-    actualizar_datos()
-    st.rerun()
 
 # Gráfica única: Consumo mensual por día
 if st.session_state.dias_mes:
@@ -146,6 +129,8 @@ if st.session_state.dias_mes:
     )
     st.plotly_chart(fig, use_container_width=True)
 
+st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
+
 if st.button("Enviar alerta de prueba"):
-    # Simulación de alerta (sin enviar realmente para evitar spam en pruebas)
-    st.success("Correo de prueba simulado (no enviado)")
+    enviar_alerta(tipo="fuga")
+    st.success("Correo de prueba enviado (verifica tu bandeja)")
