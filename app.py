@@ -1,13 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import threading
-import time
 from datetime import datetime
 import plotly.graph_objects as go
-from tensorflow.keras.models import load_model
-from tensorflow.keras.losses import MeanSquaredError
-from sklearn.preprocessing import MinMaxScaler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -18,7 +13,7 @@ st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
-# Configuración
+# Configuración email
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "lvchktwnenwvgdje")
@@ -26,38 +21,27 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "lvchktwnenwvgdje")
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
 # Estado inicial
-if 'consumo_actual' not in st.session_state:
-    st.session_state.consumo_actual = 0.0
+if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
-    st.session_state.mse_actual = 0.0
     st.session_state.estado = "Presiona 'Actualizar datos' para comenzar"
-    st.session_state.hist_consumo = []
-    st.session_state.hist_mse = []
     st.session_state.last_check = None
     st.session_state.error_msg = ""
+    st.session_state.dias_mes = []
+    st.session_state.consumo_por_dia = []
 
 # Función alerta
-def enviar_alerta(mse, tipo="fuga"):
+def enviar_alerta(tipo="fuga"):
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
         if tipo == "fuga":
             subject = f"🚨 Alerta posible fuga - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            body = f"""Posible fuga detectada.
-
-MSE: {mse:.6f}
-Consumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
-Fecha/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
+            body = f"Posible consumo anómalo detectado.\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise urgentemente."
         else:
             subject = f"⚠️ Consumo mensual alto - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            body = f"""Consumo mensual cerca del límite.
-
-Actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
-Fecha/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
+            body = f"Consumo mensual cerca del límite.\nActual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise el uso."
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
@@ -68,7 +52,7 @@ Fecha/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     except Exception as e:
         st.error(f"Error correo: {e}")
 
-# Actualización de datos (solo al clic)
+# Función principal de actualización (ligera y rápida)
 def actualizar_datos():
     st.session_state.estado = "Actualizando..."
     st.session_state.error_msg = ""
@@ -79,100 +63,81 @@ def actualizar_datos():
         df = df.dropna(subset=['timestamp'])
         df = df[['timestamp', 'total_liters']].sort_values('timestamp').drop_duplicates(subset=['timestamp'])
         df.set_index('timestamp', inplace=True)
-        series = df['total_liters'].resample('5T').last().ffill()
-        consumption = series.diff().fillna(0)
+        series = df['total_liters'].resample('D').last().ffill()  # Resample por día para gráfica mensual
 
-        if len(consumption) < 288:
-            st.session_state.error_msg = "Datos insuficientes (menos de 288 intervalos)"
-            st.session_state.estado = "Datos insuficientes"
-            return
-
-        # Normalización local (sin scaler externo)
-        scaler_local = MinMaxScaler()
-        consumption_values = consumption.values.reshape(-1, 1)
-        consumption_scaled = scaler_local.fit_transform(consumption_values)
-
-        last_seq = consumption_scaled[-288:].reshape(1, 288, 1)
-
-        # Cargar modelo
-        model = load_model('modelo_anomalias_agua.h5', compile=False)
-        model.compile(optimizer='adam', loss=MeanSquaredError())
-
-        pred = model.predict(last_seq, verbose=0)
-        mse = np.mean(np.power(last_seq - pred, 2))
-
-        # Consumo total
-        st.session_state.consumo_actual = series.iloc[-1]
-
-        # Consumo mensual
+        # Consumo mensual (desde día 1 del mes actual)
         today = datetime.now()
         first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         df_month = series[series.index >= first_day]
+
         if not df_month.empty:
-            consumo_mensual_litros = df_month.iloc[-1] - df_month.iloc[0] if len(df_month) > 1 else df_month.iloc[-1]
+            consumo_inicial = df_month.iloc[0]
+            consumo_final = df_month.iloc[-1]
+            consumo_mensual_litros = consumo_final - consumo_inicial
             st.session_state.consumo_mensual = consumo_mensual_litros
             st.session_state.porcentaje_mensual = (consumo_mensual_litros / 15000) * 100
+
+            # Días y consumo por día
+            dias = [(d - first_day).days + 1 for d in df_month.index]
+            consumo_por_dia = (df_month - consumo_inicial).tolist()
+
+            st.session_state.dias_mes = dias
+            st.session_state.consumo_por_dia = consumo_por_dia
+
+            # Alerta preventiva si >90%
+            if st.session_state.porcentaje_mensual > 90:
+                enviar_alerta(tipo="limite")
+
         else:
             st.session_state.consumo_mensual = 0.0
             st.session_state.porcentaje_mensual = 0.0
+            st.session_state.dias_mes = []
+            st.session_state.consumo_por_dia = []
 
-        st.session_state.mse_actual = mse
-        st.session_state.hist_consumo.append(st.session_state.consumo_actual / 1000)
-        st.session_state.hist_mse.append(mse)
         st.session_state.last_check = datetime.now()
-
-        if len(st.session_state.hist_consumo) > 200:
-            st.session_state.hist_consumo.pop(0)
-            st.session_state.hist_mse.pop(0)
-
-        if mse > 0.05:  # threshold fijo temporal (ajusta según tu entrenamiento)
-            enviar_alerta(mse, "fuga")
-            st.session_state.estado = "¡ALERTA DE FUGA!"
-        elif st.session_state.porcentaje_mensual > 90:
-            enviar_alerta(mse, "limite")
-            st.session_state.estado = "Consumo mensual alto"
-        else:
-            st.session_state.estado = "Normal"
-            st.session_state.error_msg = ""
+        st.session_state.estado = "Datos actualizados"
 
     except Exception as e:
         st.session_state.error_msg = f"Error: {str(e)}"
         st.session_state.estado = "Error al actualizar"
 
 # Dashboard
-col1, col2, col3 = st.columns(3)
-col1.metric("Consumo mensual actual", f"{st.session_state.consumo_mensual/1000:.2f} m³", f"{st.session_state.porcentaje_mensual:.1f}%")
-col2.metric("Estado", st.session_state.estado)
-col3.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M') if st.session_state.last_check else "No actualizado")
+col1, col2 = st.columns(2)
+col1.metric("Consumo mensual actual", f"{st.session_state.consumo_mensual/1000:.2f} m³")
+col2.metric("Porcentaje usado", f"{st.session_state.porcentaje_mensual:.1f}%")
+
+st.metric("Estado", st.session_state.estado)
+st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M') if st.session_state.last_check else "No actualizado")
 
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
+# Botón de actualización
 if st.button("🔄 Actualizar datos ahora"):
     actualizar_datos()
     st.rerun()
 
-# Gráficas
-if st.session_state.hist_consumo:
-    fig_consumo = go.Figure()
-    fig_consumo.add_trace(go.Scatter(y=st.session_state.hist_consumo, mode='lines+markers', name='Consumo (m³)', line=dict(color='blue')))
-    fig_consumo.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite mensual")
-    fig_consumo.update_layout(title="Consumo Acumulado", xaxis_title="Actualizaciones", yaxis_title="m³")
-    st.plotly_chart(fig_consumo, use_container_width=True)
-
-    fig_mensual = go.Figure()
-    fig_mensual.add_trace(go.Bar(x=["Mes actual"], y=[st.session_state.consumo_mensual/1000], name='Consumo mensual', marker_color='royalblue'))
-    fig_mensual.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
-    fig_mensual.update_layout(title="Consumo del Mes Actual", yaxis_title="m³")
-    st.plotly_chart(fig_mensual, use_container_width=True)
-
-    fig_mse = go.Figure()
-    fig_mse.add_trace(go.Scatter(y=st.session_state.hist_mse, mode='lines+markers', name='Error MSE', line=dict(color='red')))
-    fig_mse.update_layout(title="Error MSE (detección de anomalías)", xaxis_title="Actualizaciones", yaxis_title="MSE")
-    st.plotly_chart(fig_mse, use_container_width=True)
+# Única gráfica: Consumo mensual
+if st.session_state.dias_mes:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=st.session_state.dias_mes,
+        y=[c / 1000 for c in st.session_state.consumo_por_dia],
+        mode='lines+markers',
+        name='Consumo acumulado',
+        line=dict(color='blue')
+    ))
+    fig.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
+    fig.update_layout(
+        title="Consumo Mensual Acumulado (m³)",
+        xaxis_title="Día del mes",
+        yaxis_title="Volumen (m³)",
+        xaxis=dict(tickmode='linear', dtick=1)
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
 
 if st.button("Enviar alerta de prueba"):
-    enviar_alerta(0.5)
+    enviar_alerta(0.5, tipo="fuga")
     st.success("Correo de prueba enviado")
