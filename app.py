@@ -36,12 +36,19 @@ def enviar_alerta(tipo="fuga"):
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if tipo == "fuga":
-            subject = f"🚨 Alerta posible fuga - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            body = f"Posible consumo anómalo detectado.\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise urgentemente."
+            subject = f"🚨 Alerta posible fuga - {now_str}"
+            body = f"""Posible consumo anómalo detectado.
+Consumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
+Fecha/Hora: {now_str}
+Revise urgentemente."""
         else:
-            subject = f"⚠️ Consumo mensual alto - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            body = f"Consumo mensual cerca del límite.\nActual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise el uso."
+            subject = f"⚠️ Consumo mensual alto - {now_str}"
+            body = f"""Consumo mensual cerca del límite.
+Actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
+Fecha/Hora: {now_str}
+Revise el uso."""
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
@@ -52,7 +59,7 @@ def enviar_alerta(tipo="fuga"):
     except Exception as e:
         st.error(f"Error correo: {e}")
 
-# Función principal de actualización (ligera y rápida)
+# Función actualización (solo al botón)
 def actualizar_datos():
     st.session_state.estado = "Actualizando..."
     st.session_state.error_msg = ""
@@ -63,9 +70,9 @@ def actualizar_datos():
         df = df.dropna(subset=['timestamp'])
         df = df[['timestamp', 'total_liters']].sort_values('timestamp').drop_duplicates(subset=['timestamp'])
         df.set_index('timestamp', inplace=True)
-        series = df['total_liters'].resample('D').last().ffill()  # Resample por día para gráfica mensual
+        series = df['total_liters'].resample('D').last().ffill()  # Resample diario para gráfica mensual
 
-        # Consumo mensual (desde día 1 del mes actual)
+        # Consumo mensual
         today = datetime.now()
         first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         df_month = series[series.index >= first_day]
@@ -73,20 +80,16 @@ def actualizar_datos():
         if not df_month.empty:
             consumo_inicial = df_month.iloc[0]
             consumo_final = df_month.iloc[-1]
-            consumo_mensual_litros = consumo_final - consumo_inicial
+            consumo_mensual_litros = consumo_final - consumo_inicial if len(df_month) > 1 else consumo_final
             st.session_state.consumo_mensual = consumo_mensual_litros
             st.session_state.porcentaje_mensual = (consumo_mensual_litros / 15000) * 100
 
-            # Días y consumo por día
+            # Preparar datos para gráfica (días y consumo acumulado)
             dias = [(d - first_day).days + 1 for d in df_month.index]
             consumo_por_dia = (df_month - consumo_inicial).tolist()
 
             st.session_state.dias_mes = dias
             st.session_state.consumo_por_dia = consumo_por_dia
-
-            # Alerta preventiva si >90%
-            if st.session_state.porcentaje_mensual > 90:
-                enviar_alerta(tipo="limite")
 
         else:
             st.session_state.consumo_mensual = 0.0
@@ -112,12 +115,12 @@ st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M')
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
-# Botón de actualización
+# Botón principal
 if st.button("🔄 Actualizar datos ahora"):
     actualizar_datos()
     st.rerun()
 
-# Única gráfica: Consumo mensual
+# Única gráfica: Consumo mensual por día
 if st.session_state.dias_mes:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
