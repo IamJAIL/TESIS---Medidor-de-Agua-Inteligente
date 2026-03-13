@@ -7,6 +7,7 @@ from datetime import datetime
 import plotly.graph_objects as go
 from tensorflow.keras.models import load_model
 from tensorflow.keras.losses import MeanSquaredError
+from sklearn.preprocessing import MinMaxScaler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -67,16 +68,10 @@ Fecha/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     except Exception as e:
         st.error(f"Error correo: {e}")
 
-# Hilo de monitoreo (solo se ejecuta cuando se presiona el botón)
+# Actualización de datos (solo al clic)
 def actualizar_datos():
-    st.session_state.estado = "Actualizando datos..."
-    try:
-        model = load_model('modelo_anomalias_agua.h5', compile=False)
-        model.compile(optimizer='adam', loss=MeanSquaredError())
-    except Exception as e:
-        st.session_state.error_msg = f"Error modelo: {str(e)}"
-        st.session_state.estado = "Error cargando modelo"
-        return
+    st.session_state.estado = "Actualizando..."
+    st.session_state.error_msg = ""
 
     try:
         df = pd.read_csv(url)
@@ -88,15 +83,23 @@ def actualizar_datos():
         consumption = series.diff().fillna(0)
 
         if len(consumption) < 288:
-            st.session_state.error_msg = "Datos insuficientes"
+            st.session_state.error_msg = "Datos insuficientes (menos de 288 intervalos)"
             st.session_state.estado = "Datos insuficientes"
             return
 
-        last_seq = consumption[-288:].values.reshape(1, 288, 1)
-        last_scaled = scaler.transform(last_seq.reshape(-1, 1)).reshape(1, 288, 1)
+        # Normalización local (sin scaler externo)
+        scaler_local = MinMaxScaler()
+        consumption_values = consumption.values.reshape(-1, 1)
+        consumption_scaled = scaler_local.fit_transform(consumption_values)
 
-        pred = model.predict(last_scaled, verbose=0)
-        mse = np.mean(np.power(last_scaled - pred, 2))
+        last_seq = consumption_scaled[-288:].reshape(1, 288, 1)
+
+        # Cargar modelo
+        model = load_model('modelo_anomalias_agua.h5', compile=False)
+        model.compile(optimizer='adam', loss=MeanSquaredError())
+
+        pred = model.predict(last_seq, verbose=0)
+        mse = np.mean(np.power(last_seq - pred, 2))
 
         # Consumo total
         st.session_state.consumo_actual = series.iloc[-1]
@@ -122,7 +125,7 @@ def actualizar_datos():
             st.session_state.hist_consumo.pop(0)
             st.session_state.hist_mse.pop(0)
 
-        if mse > threshold:
+        if mse > 0.05:  # threshold fijo temporal (ajusta según tu entrenamiento)
             enviar_alerta(mse, "fuga")
             st.session_state.estado = "¡ALERTA DE FUGA!"
         elif st.session_state.porcentaje_mensual > 90:
@@ -136,7 +139,7 @@ def actualizar_datos():
         st.session_state.error_msg = f"Error: {str(e)}"
         st.session_state.estado = "Error al actualizar"
 
-# Dashboard principal
+# Dashboard
 col1, col2, col3 = st.columns(3)
 col1.metric("Consumo mensual actual", f"{st.session_state.consumo_mensual/1000:.2f} m³", f"{st.session_state.porcentaje_mensual:.1f}%")
 col2.metric("Estado", st.session_state.estado)
@@ -145,10 +148,9 @@ col3.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
-# Botón principal
 if st.button("🔄 Actualizar datos ahora"):
     actualizar_datos()
-    st.rerun()  # Fuerza actualización de toda la página
+    st.rerun()
 
 # Gráficas
 if st.session_state.hist_consumo:
