@@ -146,6 +146,4 @@ if st.button("Enviar alerta de prueba por correo"):
     enviar_alerta(tipo="fuga")
     st.success("Correo de prueba enviado – verifica tu bandeja")
 
-st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")tu bandeja")
-
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
