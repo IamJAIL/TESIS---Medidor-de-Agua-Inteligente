@@ -1,0 +1,14 @@
+name: Deploy to Render on push
+
+on:
+  push:
+    branches:
+      - main   # Cambia a "master" si tu rama principal se llama así
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render Deploy Hook
+        run: |
+          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
