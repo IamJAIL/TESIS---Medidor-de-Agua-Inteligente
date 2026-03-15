@@ -16,63 +16,66 @@ st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por pers
 # Configuración de correo
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
+
+# Intentamos leer la contraseña de entorno
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
 if not APP_PASSWORD:
-    st.warning("No se encontró APP_PASSWORD en variables de entorno de Render. Configúrala en Environment.")
+    st.error("No se encontró APP_PASSWORD en las variables de entorno de Render.")
+    st.info("Ve a Render → tu servicio → Environment → agrega APP_PASSWORD con valor tgyvxozgfybkhprr")
+else:
+    st.success("APP_PASSWORD detectada en entorno (longitud: " + str(len(APP_PASSWORD)) + " caracteres)")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
-# ────────────────────────────────────────────────────────────────
-# INICIALIZACIÓN COMPLETA DE TODAS LAS VARIABLES DE ESTADO
-# ────────────────────────────────────────────────────────────────
+# Inicialización completa
 if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
-    st.session_state.mse_actual = 0.0           # ← Clave agregada aquí
-    st.session_state.estado = "Cargando datos del mes..."
+    st.session_state.mse_actual = 0.0
+    st.session_state.estado = "Cargando datos..."
     st.session_state.last_check = None
     st.session_state.error_msg = ""
-    st.session_state.horas_mes = []
-    st.session_state.consumo_por_hora = []
+    st.session_state.dias_mes = []
+    st.session_state.consumo_por_dia = []
 
-# Función para enviar alerta (usa mse_actual si existe)
+# Función de envío de correo (con puerto 587 + STARTTLS y depuración)
 def enviar_alerta(tipo="fuga"):
     try:
+        st.info("Intentando conectar a smtp.gmail.com puerto 587...")
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.ehlo()  # Identificación
+        server.starttls()  # Activar TLS
+        server.ehlo()
+        st.info("TLS activado. Intentando login...")
+        server.login(EMAIL_FROM, APP_PASSWORD)
+        st.info("Login exitoso. Preparando mensaje...")
+
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        mse_text = f"MSE detectado: {st.session_state.mse_actual:.6f}\n" if 'mse_actual' in st.session_state else ""
-        if tipo == "fuga":
-            subject = f"🚨 Alerta posible fuga - {now_str}"
-            body = f"""Posible consumo anómalo detectado.
+        subject = f"🧪 Prueba de alerta desde Render - {now_str}"
+        body = f"""Este es un correo de prueba enviado desde la app en Render.
 
-{mse_text}Consumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}% del límite)
 Fecha/Hora: {now_str}
+Consumo mensual simulado: {st.session_state.consumo_mensual/1000:.2f} m³
+Porcentaje: {st.session_state.porcentaje_mensual:.1f}%
 
-Revise urgentemente las tuberías.
-"""
-        else:
-            subject = f"⚠️ Consumo mensual alto - {now_str}"
-            body = f"""Consumo mensual cerca del límite.
-
-Consumo actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
-Fecha/Hora: {now_str}
-Revise el uso del agua.
+Si recibes este mensaje, el envío de correos está funcionando.
 """
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(EMAIL_FROM, APP_PASSWORD)
+
+        st.info("Enviando mensaje...")
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
-        st.success("Alerta enviada correctamente")
+        st.success("Correo enviado con éxito ✓ Revisa tu bandeja (incluye Spam/Promociones)")
     except Exception as e:
         st.error(f"Error al enviar correo: {str(e)}")
+        st.info("Posibles causas: contraseña incorrecta, puerto bloqueado, Gmail rechazó la conexión.")
 
-# Carga automática de datos
+# Carga automática de datos (simplificada)
 @st.cache_data(ttl=300)
 def cargar_datos():
     try:
@@ -106,12 +109,10 @@ def cargar_datos():
             st.session_state.consumo_por_hora = []
 
         st.session_state.last_check = datetime.now()
-        st.session_state.error_msg = ""
 
     except Exception as e:
         st.session_state.error_msg = f"Error al cargar datos: {str(e)}"
 
-# Cargar datos al abrir la página
 cargar_datos()
 
 # Dashboard
@@ -123,9 +124,6 @@ st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M')
 
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
-
-# Nombre del mes actual
-mes_actual = datetime.now().strftime("%B %Y")
 
 # Gráfica 1: Consumo por hora del mes
 if st.session_state.horas_mes:
@@ -140,14 +138,14 @@ if st.session_state.horas_mes:
     ))
     fig1.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
     fig1.update_layout(
-        title=f"Consumo Acumulado por Hora - {mes_actual} (m³)",
+        title=f"Consumo Acumulado por Hora del Mes Actual (m³)",
         xaxis_title="Horas desde inicio del mes",
         yaxis_title="Volumen (m³)",
         height=500
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# Gráfica 2: Entrenamiento + alertas del mes
+# Gráfica 2: Entrenamiento + alertas
 st.subheader("Entrenamiento del modelo y alertas detectadas")
 epochs = list(range(1, 31))
 loss = [0.8 / (e + 1) + np.random.normal(0, 0.02) for e in epochs]
@@ -163,17 +161,17 @@ fig2.add_trace(go.Scatter(
 
 dias_alerta = np.random.choice(range(1, 32), size=3, replace=False)
 for dia in dias_alerta:
-    fig2.add_vline(x=dia, line_dash="dot", line_color="red", annotation_text=f"Alerta en {mes_actual} día {dia}")
+    fig2.add_vline(x=dia, line_dash="dot", line_color="red", annotation_text=f"Alerta día {dia}")
 
 fig2.update_layout(
-    title=f"Pérdida del entrenamiento y alertas/anomalías - {mes_actual}",
+    title="Pérdida del entrenamiento y alertas/anomalías del mes",
     xaxis_title="Épocas / Días del mes",
     yaxis_title="Pérdida (loss)",
     height=500
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# Ejemplo de alerta simulada
+# Alerta simulada
 st.subheader("Ejemplo de alerta simulada (formato de correo)")
 sim_mse = 0.078912
 sim_fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
