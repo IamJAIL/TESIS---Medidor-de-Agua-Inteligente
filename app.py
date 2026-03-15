@@ -16,66 +16,55 @@ st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por pers
 # Configuración de correo
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
-
-# Intentamos leer la contraseña de entorno
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
-
-if not APP_PASSWORD:
-    st.error("No se encontró APP_PASSWORD en las variables de entorno de Render.")
-    st.info("Ve a Render → tu servicio → Environment → agrega APP_PASSWORD con valor tgyvxozgfybkhprr")
-else:
-    st.success("APP_PASSWORD detectada en entorno (longitud: " + str(len(APP_PASSWORD)) + " caracteres)")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
-# Inicialización completa
+# Inicialización del estado
 if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
-    st.session_state.mse_actual = 0.0
-    st.session_state.estado = "Cargando datos..."
+    st.session_state.horas_mes = []
+    st.session_state.consumo_por_hora = []
     st.session_state.last_check = None
     st.session_state.error_msg = ""
-    st.session_state.dias_mes = []
-    st.session_state.consumo_por_dia = []
 
-# Función de envío de correo (con puerto 587 + STARTTLS y depuración)
+# Función para enviar alerta (sin mensajes técnicos visibles)
 def enviar_alerta(tipo="fuga"):
     try:
-        st.info("Intentando conectar a smtp.gmail.com puerto 587...")
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.ehlo()  # Identificación
-        server.starttls()  # Activar TLS
-        server.ehlo()
-        st.info("TLS activado. Intentando login...")
-        server.login(EMAIL_FROM, APP_PASSWORD)
-        st.info("Login exitoso. Preparando mensaje...")
-
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        subject = f"🧪 Prueba de alerta desde Render - {now_str}"
-        body = f"""Este es un correo de prueba enviado desde la app en Render.
+        if tipo == "fuga":
+            subject = f"🚨 Alerta posible fuga - {now_str}"
+            body = f"""Posible consumo anómalo detectado.
 
+Consumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
+Fecha/Hora de detección: {now_str}
+
+Revise urgentemente las tuberías.
+"""
+        else:
+            subject = f"⚠️ Consumo mensual alto - {now_str}"
+            body = f"""Consumo mensual cerca del límite.
+
+Actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
 Fecha/Hora: {now_str}
-Consumo mensual simulado: {st.session_state.consumo_mensual/1000:.2f} m³
-Porcentaje: {st.session_state.porcentaje_mensual:.1f}%
-
-Si recibes este mensaje, el envío de correos está funcionando.
+Revise el uso del agua.
 """
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
-
-        st.info("Enviando mensaje...")
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_FROM, APP_PASSWORD)
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
-        st.success("Correo enviado con éxito ✓ Revisa tu bandeja (incluye Spam/Promociones)")
-    except Exception as e:
-        st.error(f"Error al enviar correo: {str(e)}")
-        st.info("Posibles causas: contraseña incorrecta, puerto bloqueado, Gmail rechazó la conexión.")
+        st.success("Alerta enviada")
+    except:
+        st.error("No se pudo enviar la alerta")
 
-# Carga automática de datos (simplificada)
+# Carga automática de datos
 @st.cache_data(ttl=300)
 def cargar_datos():
     try:
@@ -111,7 +100,7 @@ def cargar_datos():
         st.session_state.last_check = datetime.now()
 
     except Exception as e:
-        st.session_state.error_msg = f"Error al cargar datos: {str(e)}"
+        st.session_state.error_msg = "Error al cargar datos del sensor"
 
 cargar_datos()
 
@@ -120,7 +109,7 @@ col1, col2 = st.columns(2)
 col1.metric("Consumo mensual actual", f"{st.session_state.consumo_mensual/1000:.2f} m³")
 col2.metric("Porcentaje usado", f"{st.session_state.porcentaje_mensual:.1f}%")
 
-st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M') if st.session_state.last_check else "No cargado")
+st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m/%Y %H:%M') if st.session_state.last_check else "No cargado")
 
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
@@ -138,14 +127,14 @@ if st.session_state.horas_mes:
     ))
     fig1.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
     fig1.update_layout(
-        title=f"Consumo Acumulado por Hora del Mes Actual (m³)",
+        title="Consumo Acumulado por Hora del Mes Actual (m³)",
         xaxis_title="Horas desde inicio del mes",
         yaxis_title="Volumen (m³)",
         height=500
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# Gráfica 2: Entrenamiento + alertas
+# Gráfica 2: Entrenamiento + alertas del mes
 st.subheader("Entrenamiento del modelo y alertas detectadas")
 epochs = list(range(1, 31))
 loss = [0.8 / (e + 1) + np.random.normal(0, 0.02) for e in epochs]
@@ -171,31 +160,8 @@ fig2.update_layout(
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# Alerta simulada
-st.subheader("Ejemplo de alerta simulada (formato de correo)")
-sim_mse = 0.078912
-sim_fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-sim_consumo = st.session_state.consumo_mensual / 1000 if st.session_state.consumo_mensual else 7.85
-sim_porcentaje = st.session_state.porcentaje_mensual if st.session_state.porcentaje_mensual else 52.3
-
-alerta_simulada = f"""
-**Asunto:** 🚨 Alerta: Posible fuga de agua detectada
-
-Se ha detectado un consumo anómalo en la vivienda.
-
-- MSE detectado: {sim_mse:.6f}
-- Consumo mensual actual: {sim_consumo:.2f} m³ ({sim_porcentaje:.1f}% del límite autorizado)
-- Fecha/Hora de detección: {sim_fecha}
-
-**Recomendación urgente:** Revise las tuberías y válvulas inmediatamente.
-
-Sistema de monitoreo IoT + IA – Residencia Quito
-"""
-st.code(alerta_simulada, language="text")
-
-# Botón de prueba real
+# Botón de prueba real (sin detalles técnicos)
 if st.button("Enviar alerta de prueba por correo"):
     enviar_alerta(tipo="fuga")
-    st.success("Correo de prueba enviado – verifica tu bandeja (incluyendo Spam/Promociones)")
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
