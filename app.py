@@ -11,20 +11,17 @@ import os
 st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
-st.markdown("**Hogar: 5 personas** | **Límite mensual autorizado: 15 m³** (3 m³ por persona)")
+st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
 # Configuración de correo
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
-APP_PASSWORD = os.environ.get("APP_PASSWORD")
-
-if not APP_PASSWORD:
-    st.warning("No se encontró la contraseña de aplicación. Configura la variable APP_PASSWORD en Render → Environment.")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "tgyvxozgfybkhprr")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
 # Estado inicial
-if 'consumo_mensual' not in st.session_state:
+if 'datos_cargados' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
     st.session_state.horas_mes = []
@@ -100,6 +97,9 @@ st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m %H:%M')
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
+# Nombre del mes actual
+mes_actual = datetime.now().strftime("%B %Y")  # Ej: Marzo 2026
+
 # Gráfica 1: Consumo por hora del mes (detalle con puntos)
 if st.session_state.horas_mes:
     fig1 = go.Figure()
@@ -113,7 +113,7 @@ if st.session_state.horas_mes:
     ))
     fig1.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
     fig1.update_layout(
-        title="Consumo Acumulado por Hora del Mes Actual (m³)",
+        title=f"Consumo Acumulado por Hora - {mes_actual} (m³)",
         xaxis_title="Horas desde inicio del mes",
         yaxis_title="Volumen (m³)",
         height=500
@@ -137,10 +137,10 @@ fig2.add_trace(go.Scatter(
 # Simulación de alertas (días con anomalía)
 dias_alerta = np.random.choice(range(1, 32), size=3, replace=False)
 for dia in dias_alerta:
-    fig2.add_vline(x=dia, line_dash="dot", line_color="red", annotation_text=f"Alerta día {dia}")
+    fig2.add_vline(x=dia, line_dash="dot", line_color="red", annotation_text=f"Alerta en {mes_actual} día {dia}")
 
 fig2.update_layout(
-    title="Pérdida del entrenamiento y alertas/anomalías del mes",
+    title=f"Pérdida del entrenamiento y alertas/anomalías - {mes_actual}",
     xaxis_title="Épocas / Días del mes",
     yaxis_title="Pérdida (loss)",
     height=500
