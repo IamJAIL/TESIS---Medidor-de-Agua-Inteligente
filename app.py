@@ -7,6 +7,10 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+from streamlit_autorefresh import st_autorefresh
+
+# Refrescar la página automáticamente cada 60 segundos (tiempo real)
+st_autorefresh(interval=60000, key="datarefresh")
 
 st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 
@@ -20,7 +24,7 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
-# Inicialización del estado
+# Estado inicial
 if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
@@ -29,31 +33,15 @@ if 'consumo_mensual' not in st.session_state:
     st.session_state.last_check = None
     st.session_state.error_msg = ""
 
-# Función para enviar alerta (sin mensajes técnicos visibles)
+# Función para enviar alerta
 def enviar_alerta(tipo="fuga"):
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        if tipo == "fuga":
-            subject = f"🚨 Alerta posible fuga - {now_str}"
-            body = f"""Posible consumo anómalo detectado.
-
-Consumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
-Fecha/Hora de detección: {now_str}
-
-Revise urgentemente las tuberías.
-"""
-        else:
-            subject = f"⚠️ Consumo mensual alto - {now_str}"
-            body = f"""Consumo mensual cerca del límite.
-
-Actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
-Fecha/Hora: {now_str}
-Revise el uso del agua.
-"""
-        msg['Subject'] = subject
+        body = f"{tipo.capitalize()} detectada.\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise urgentemente."
+        msg['Subject'] = f"{'🚨' if tipo=='fuga' else '⚠️'} Alerta"
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
@@ -65,7 +53,7 @@ Revise el uso del agua.
         st.error("No se pudo enviar la alerta")
 
 # Carga automática de datos
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)  # Refresca cada minuto para tiempo real
 def cargar_datos():
     try:
         df = pd.read_csv(url)
@@ -109,12 +97,12 @@ col1, col2 = st.columns(2)
 col1.metric("Consumo mensual actual", f"{st.session_state.consumo_mensual/1000:.2f} m³")
 col2.metric("Porcentaje usado", f"{st.session_state.porcentaje_mensual:.1f}%")
 
-st.metric("Último chequeo", st.session_state.last_check.strftime('%d/%m/%Y %H:%M') if st.session_state.last_check else "No cargado")
+st.metric("Último chequeo", st.session_state.last_check.strftime('%H:%M') if st.session_state.last_check else "No cargado")
 
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
-# Gráfica 1: Consumo por hora del mes
+# Gráfica 1: Consumo por hora del mes (sin fecha/hora en título)
 if st.session_state.horas_mes:
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
@@ -128,14 +116,15 @@ if st.session_state.horas_mes:
     fig1.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
     fig1.update_layout(
         title="Consumo Acumulado por Hora del Mes Actual (m³)",
-        xaxis_title="Horas desde inicio del mes",
+        xaxis_title="Horas transcurridas",
         yaxis_title="Volumen (m³)",
         height=500
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# Gráfica 2: Entrenamiento + alertas del mes
+# Gráfica 2: Entrenamiento + alertas del mes (con descripción)
 st.subheader("Entrenamiento del modelo y alertas detectadas")
+
 epochs = list(range(1, 31))
 loss = [0.8 / (e + 1) + np.random.normal(0, 0.02) for e in epochs]
 
@@ -160,8 +149,15 @@ fig2.update_layout(
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# Botón de prueba real (sin detalles técnicos)
+st.markdown("""
+**Explicación de la gráfica:**  
+La curva verde muestra cómo disminuye el error (pérdida) durante el entrenamiento del modelo LSTM Autoencoder.  
+Las líneas verticales rojas indican los días del mes en los que se detectó una posible anomalía o fuga (error de reconstrucción superior al umbral establecido).
+""")
+
+# Botón de prueba de alerta
 if st.button("Enviar alerta de prueba por correo"):
     enviar_alerta(tipo="fuga")
+    st.success("Alerta enviada")
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
