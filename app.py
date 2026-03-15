@@ -13,61 +13,62 @@ st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
-# Configuración de correo electrónico
+# Configuración de correo
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
 if not APP_PASSWORD:
-    st.warning("No se encontró la contraseña de aplicación (APP_PASSWORD) en las variables de entorno de Render.")
+    st.warning("No se encontró APP_PASSWORD en variables de entorno de Render. Configúrala en Environment.")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
-# Inicialización del estado
+# ────────────────────────────────────────────────────────────────
+# INICIALIZACIÓN COMPLETA DE TODAS LAS VARIABLES DE ESTADO
+# ────────────────────────────────────────────────────────────────
 if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
-    st.session_state.horas_mes = []
-    st.session_state.consumo_por_hora = []
+    st.session_state.mse_actual = 0.0           # ← Clave agregada aquí
+    st.session_state.estado = "Cargando datos del mes..."
     st.session_state.last_check = None
     st.session_state.error_msg = ""
+    st.session_state.horas_mes = []
+    st.session_state.consumo_por_hora = []
 
-# Función para enviar alerta por correo (con puerto 587 + STARTTLS)
+# Función para enviar alerta (usa mse_actual si existe)
 def enviar_alerta(tipo="fuga"):
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        mse_text = f"MSE detectado: {st.session_state.mse_actual:.6f}\n" if 'mse_actual' in st.session_state else ""
         if tipo == "fuga":
             subject = f"🚨 Alerta posible fuga - {now_str}"
             body = f"""Posible consumo anómalo detectado.
 
-MSE: {st.session_state.mse_actual:.6f} (si aplica)
-Consumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}% del límite autorizado)
-Fecha/Hora de detección: {now_str}
+{mse_text}Consumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}% del límite)
+Fecha/Hora: {now_str}
 
-**Recomendación urgente:** Revise las tuberías y válvulas inmediatamente para evitar pérdidas mayores.
+Revise urgentemente las tuberías.
 """
         else:
             subject = f"⚠️ Consumo mensual alto - {now_str}"
-            body = f"""Consumo mensual cerca o superando el límite autorizado.
+            body = f"""Consumo mensual cerca del límite.
 
 Consumo actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
 Fecha/Hora: {now_str}
-Revise el uso del agua para no exceder el límite.
+Revise el uso del agua.
 """
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
-
-        # Conexión con puerto 587 + STARTTLS (opción 1 - más estable en cloud)
         server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()  # Activa TLS
+        server.starttls()
         server.login(EMAIL_FROM, APP_PASSWORD)
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
-
-        st.success(f"Alerta enviada correctamente ({tipo})")
+        st.success("Alerta enviada correctamente")
     except Exception as e:
         st.error(f"Error al enviar correo: {str(e)}")
 
@@ -105,10 +106,12 @@ def cargar_datos():
             st.session_state.consumo_por_hora = []
 
         st.session_state.last_check = datetime.now()
+        st.session_state.error_msg = ""
 
     except Exception as e:
         st.session_state.error_msg = f"Error al cargar datos: {str(e)}"
 
+# Cargar datos al abrir la página
 cargar_datos()
 
 # Dashboard
@@ -195,6 +198,6 @@ st.code(alerta_simulada, language="text")
 # Botón de prueba real
 if st.button("Enviar alerta de prueba por correo"):
     enviar_alerta(tipo="fuga")
-    st.success("Correo de prueba enviado – verifica tu bandeja")
+    st.success("Correo de prueba enviado – verifica tu bandeja (incluyendo Spam/Promociones)")
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
