@@ -32,7 +32,7 @@ if 'consumo_mensual' not in st.session_state:
     st.session_state.last_check = None
     st.session_state.error_msg = ""
 
-# Función para enviar alerta por correo
+# Función para enviar alerta por correo (con puerto 587 + STARTTLS)
 def enviar_alerta(tipo="fuga"):
     try:
         msg = MIMEMultipart()
@@ -43,25 +43,31 @@ def enviar_alerta(tipo="fuga"):
             subject = f"🚨 Alerta posible fuga - {now_str}"
             body = f"""Posible consumo anómalo detectado.
 
-Consumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
-Fecha/Hora: {now_str}
-Revise urgentemente las tuberías.
+MSE: {st.session_state.mse_actual:.6f} (si aplica)
+Consumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}% del límite autorizado)
+Fecha/Hora de detección: {now_str}
+
+**Recomendación urgente:** Revise las tuberías y válvulas inmediatamente para evitar pérdidas mayores.
 """
         else:
             subject = f"⚠️ Consumo mensual alto - {now_str}"
-            body = f"""Consumo mensual cerca del límite.
+            body = f"""Consumo mensual cerca o superando el límite autorizado.
 
-Actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
+Consumo actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
 Fecha/Hora: {now_str}
-Revise el uso del agua.
+Revise el uso del agua para no exceder el límite.
 """
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+
+        # Conexión con puerto 587 + STARTTLS (opción 1 - más estable en cloud)
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()  # Activa TLS
         server.login(EMAIL_FROM, APP_PASSWORD)
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
-        st.success("Alerta enviada correctamente")
+
+        st.success(f"Alerta enviada correctamente ({tipo})")
     except Exception as e:
         st.error(f"Error al enviar correo: {str(e)}")
 
@@ -74,7 +80,7 @@ def cargar_datos():
         df = df.dropna(subset=['timestamp'])
         df = df[['timestamp', 'total_liters']].sort_values('timestamp').drop_duplicates(subset=['timestamp'])
         df.set_index('timestamp', inplace=True)
-        series = df['total_liters'].resample('H').last().ffill()  # Por hora
+        series = df['total_liters'].resample('H').last().ffill()
 
         today = datetime.now()
         first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -103,7 +109,6 @@ def cargar_datos():
     except Exception as e:
         st.session_state.error_msg = f"Error al cargar datos: {str(e)}"
 
-# Ejecutar carga automática al abrir la página
 cargar_datos()
 
 # Dashboard
@@ -117,9 +122,9 @@ if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
 # Nombre del mes actual
-mes_actual = datetime.now().strftime("%B %Y")  # Ej: Marzo 2026
+mes_actual = datetime.now().strftime("%B %Y")
 
-# Gráfica 1: Consumo por hora del mes (detalle con puntos)
+# Gráfica 1: Consumo por hora del mes
 if st.session_state.horas_mes:
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
@@ -153,7 +158,6 @@ fig2.add_trace(go.Scatter(
     line=dict(color='green')
 ))
 
-# Simulación de alertas (días con anomalía)
 dias_alerta = np.random.choice(range(1, 32), size=3, replace=False)
 for dia in dias_alerta:
     fig2.add_vline(x=dia, line_dash="dot", line_color="red", annotation_text=f"Alerta en {mes_actual} día {dia}")
@@ -178,11 +182,11 @@ alerta_simulada = f"""
 
 Se ha detectado un consumo anómalo en la vivienda.
 
-- MSE detectado: {sim_mse:.6f} (superior al umbral)
+- MSE detectado: {sim_mse:.6f}
 - Consumo mensual actual: {sim_consumo:.2f} m³ ({sim_porcentaje:.1f}% del límite autorizado)
 - Fecha/Hora de detección: {sim_fecha}
 
-**Recomendación urgente:** Revise las tuberías y válvulas inmediatamente para evitar pérdidas mayores.
+**Recomendación urgente:** Revise las tuberías y válvulas inmediatamente.
 
 Sistema de monitoreo IoT + IA – Residencia Quito
 """
