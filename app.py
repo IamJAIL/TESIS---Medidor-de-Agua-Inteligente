@@ -13,15 +13,18 @@ st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
-# Configuración de correo
+# Configuración de correo electrónico
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "tgyvxozgfybkhprr")
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+
+if not APP_PASSWORD:
+    st.warning("No se encontró la contraseña de aplicación (APP_PASSWORD) en las variables de entorno de Render.")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
 
-# Estado inicial
-if 'datos_cargados' not in st.session_state:
+# Inicialización del estado
+if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
     st.session_state.horas_mes = []
@@ -29,15 +32,30 @@ if 'datos_cargados' not in st.session_state:
     st.session_state.last_check = None
     st.session_state.error_msg = ""
 
-# Función para enviar alerta real
+# Función para enviar alerta por correo
 def enviar_alerta(tipo="fuga"):
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        body = f"{tipo.capitalize()} detectada.\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nFecha/Hora: {now_str}\nRevise urgentemente."
-        msg['Subject'] = f"{'🚨' if tipo=='fuga' else '⚠️'} Alerta - {now_str}"
+        if tipo == "fuga":
+            subject = f"🚨 Alerta posible fuga - {now_str}"
+            body = f"""Posible consumo anómalo detectado.
+
+Consumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
+Fecha/Hora: {now_str}
+Revise urgentemente las tuberías.
+"""
+        else:
+            subject = f"⚠️ Consumo mensual alto - {now_str}"
+            body = f"""Consumo mensual cerca del límite.
+
+Actual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)
+Fecha/Hora: {now_str}
+Revise el uso del agua.
+"""
+        msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(EMAIL_FROM, APP_PASSWORD)
@@ -85,6 +103,7 @@ def cargar_datos():
     except Exception as e:
         st.session_state.error_msg = f"Error al cargar datos: {str(e)}"
 
+# Ejecutar carga automática al abrir la página
 cargar_datos()
 
 # Dashboard
@@ -147,8 +166,8 @@ fig2.update_layout(
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# Alerta simulada
-st.subheader("Ejemplo de alerta simulada (como llegaría al correo)")
+# Ejemplo de alerta simulada
+st.subheader("Ejemplo de alerta simulada (formato de correo)")
 sim_mse = 0.078912
 sim_fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 sim_consumo = st.session_state.consumo_mensual / 1000 if st.session_state.consumo_mensual else 7.85
