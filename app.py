@@ -7,16 +7,13 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+from streamlit_autorefresh import st_autorefresh
 
-# ────────────────────────────────────────────────────────────────
-# CONFIGURACIÓN DE PÁGINA – DEBE SER LO PRIMERO DEL SCRIPT
-# ────────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Monitoreo Consumo Agua - Quito",
-    layout="wide"
-)
+# Refrescar automáticamente cada 60 segundos (tiempo real)
+st_autorefresh(interval=60000, key="datarefresh")
 
-# Título y descripción
+st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
+
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
@@ -31,8 +28,8 @@ url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME
 if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_mensual = 0.0
     st.session_state.porcentaje_mensual = 0.0
-    st.session_state.horas_mes = []
-    st.session_state.consumo_por_hora = []
+    st.session_state.dias_mes = []
+    st.session_state.consumo_por_hora = []  # Ahora guardamos los datos horarios
     st.session_state.last_check = None
     st.session_state.error_msg = ""
 
@@ -42,7 +39,6 @@ def enviar_alerta(tipo="fuga"):
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         body = f"{tipo.capitalize()} detectada.\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise urgentemente."
         msg['Subject'] = f"{'🚨' if tipo=='fuga' else '⚠️'} Alerta"
         msg.attach(MIMEText(body, 'plain'))
@@ -52,11 +48,11 @@ def enviar_alerta(tipo="fuga"):
         server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         server.quit()
         st.success("Alerta enviada")
-    except Exception as e:
+    except:
         st.error("No se pudo enviar la alerta")
 
 # Carga automática de datos
-@st.cache_data(ttl=60)  # Refresca cada minuto para simular tiempo real
+@st.cache_data(ttl=60)
 def cargar_datos():
     try:
         df = pd.read_csv(url)
@@ -64,7 +60,7 @@ def cargar_datos():
         df = df.dropna(subset=['timestamp'])
         df = df[['timestamp', 'total_liters']].sort_values('timestamp').drop_duplicates(subset=['timestamp'])
         df.set_index('timestamp', inplace=True)
-        series = df['total_liters'].resample('H').last().ffill()
+        series = df['total_liters'].resample('H').last().ffill()  # Resample por hora
 
         today = datetime.now()
         first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -77,15 +73,16 @@ def cargar_datos():
             st.session_state.consumo_mensual = consumo_mensual_litros
             st.session_state.porcentaje_mensual = (consumo_mensual_litros / 15000) * 100
 
-            horas = [(d - first_day).total_seconds() / 3600 for d in df_month.index]
+            # Datos para gráfica: días y consumo por hora
+            dias = df_month.index.day.tolist()  # Día del mes (1, 2, 3...)
             consumo_por_hora = (df_month - consumo_inicial).tolist()
 
-            st.session_state.horas_mes = horas
+            st.session_state.dias_mes = dias
             st.session_state.consumo_por_hora = consumo_por_hora
         else:
             st.session_state.consumo_mensual = 0.0
             st.session_state.porcentaje_mensual = 0.0
-            st.session_state.horas_mes = []
+            st.session_state.dias_mes = []
             st.session_state.consumo_por_hora = []
 
         st.session_state.last_check = datetime.now()
@@ -105,22 +102,23 @@ st.metric("Último chequeo", st.session_state.last_check.strftime('%H:%M') if st
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
-# Gráfica 1: Consumo por hora del mes
-if st.session_state.horas_mes:
+# Gráfica 1: Consumo por hora, pero eje X = días del mes
+if st.session_state.dias_mes:
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
-        x=st.session_state.horas_mes,
+        x=st.session_state.dias_mes,
         y=[c / 1000 for c in st.session_state.consumo_por_hora],
         mode='lines+markers',
-        name='Consumo acumulado por hora',
+        name='Consumo acumulado (por hora)',
         line=dict(color='royalblue'),
         marker=dict(size=6, color='darkblue')
     ))
     fig1.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
     fig1.update_layout(
-        title="Consumo Acumulado por Hora del Mes Actual (m³)",
-        xaxis_title="Horas desde inicio del mes",
-        yaxis_title="Volumen (m³)",
+        title="Consumo Acumulado del Mes Actual (por hora)",
+        xaxis_title="Día del mes",
+        yaxis_title="Volumen acumulado (m³)",
+        xaxis=dict(tickmode='linear', dtick=1),
         height=500
     )
     st.plotly_chart(fig1, use_container_width=True)
@@ -151,7 +149,7 @@ fig2.update_layout(
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# Botón de prueba
+# Botón de prueba de alerta
 if st.button("Enviar alerta de prueba por correo"):
     enviar_alerta(tipo="fuga")
     st.success("Alerta enviada")
