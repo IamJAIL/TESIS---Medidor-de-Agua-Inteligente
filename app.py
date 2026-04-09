@@ -13,7 +13,7 @@ st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
-# Configuración correo
+# Configuración
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
@@ -46,7 +46,7 @@ def enviar_alerta():
     except:
         st.error("No se pudo enviar la alerta")
 
-# Carga de datos con manejo de resets
+# Carga de datos más robusta
 @st.cache_data(ttl=300)
 def cargar_datos():
     try:
@@ -61,28 +61,26 @@ def cargar_datos():
         first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         df_month = series[series.index >= first_day]
 
-        if not df_month.empty:
-            # Cálculo seguro contra resets y valores negativos
+        if len(df_month) >= 1:
+            # Cálculo seguro contra resets
             diff = df_month.diff().fillna(0)
-            diff = diff.clip(lower=0)                    # Evita negativos
+            diff = diff.clip(lower=0)                    # Elimina negativos
             consumo_mensual = diff.sum()
 
             st.session_state.consumo_mensual = consumo_mensual
             st.session_state.porcentaje_mensual = (consumo_mensual / 15000) * 100
 
             dias = df_month.index.day.tolist()
-            consumo_por_dia = diff.cumsum().tolist()     # Acumulado correcto
+            consumo_por_dia = diff.cumsum().tolist()
 
             st.session_state.dias_mes = dias
             st.session_state.consumo_por_dia = consumo_por_dia
+            st.session_state.error_msg = ""
         else:
-            st.session_state.consumo_mensual = 0.0
-            st.session_state.porcentaje_mensual = 0.0
-            st.session_state.dias_mes = []
-            st.session_state.consumo_por_dia = []
+            st.session_state.error_msg = "No hay datos suficientes este mes"
 
     except Exception as e:
-        st.session_state.error_msg = "Error al cargar datos"
+        st.session_state.error_msg = f"Error al cargar datos: {str(e)}"
 
 cargar_datos()
 
@@ -94,7 +92,7 @@ col2.metric("Porcentaje usado", f"{st.session_state.porcentaje_mensual:.1f}%")
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
-# Gráfica principal: Consumo mensual por día
+# Gráfica principal
 if st.session_state.dias_mes:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -103,7 +101,7 @@ if st.session_state.dias_mes:
         mode='lines+markers',
         name='Consumo acumulado',
         line=dict(color='royalblue'),
-        marker=dict(size=8)
+        marker=dict(size=8, color='darkblue')
     ))
     fig.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
     fig.update_layout(
@@ -115,11 +113,10 @@ if st.session_state.dias_mes:
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("No hay datos suficientes para mostrar la gráfica.")
+    st.info("Esperando datos del mes actual...")
 
-# Botón de prueba
+st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
+
 if st.button("Enviar alerta de prueba por correo"):
     enviar_alerta()
     st.success("Alerta enviada")
-
-st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
