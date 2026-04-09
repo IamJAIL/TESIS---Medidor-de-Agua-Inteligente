@@ -46,7 +46,7 @@ def enviar_alerta(tipo="fuga"):
     except:
         st.error("No se pudo enviar la alerta")
 
-# Carga de datos (con manejo de gaps)
+# Carga y cálculo robusto contra resets
 @st.cache_data(ttl=300)
 def cargar_datos():
     try:
@@ -62,18 +62,17 @@ def cargar_datos():
         df_month = series[series.index >= first_day]
 
         if not df_month.empty:
-            # Cálculo robusto de consumo mensual (evita negativos)
-            consumo_mensual_litros = df_month.iloc[-1] - df_month.iloc[0]
-            if consumo_mensual_litros < 0:
-                consumo_mensual_litros = df_month.iloc[-1]  # Si hay reset, tomamos valor final
+            # Cálculo robusto: detectar resets y evitar negativos
+            diff_series = df_month.diff().fillna(0)
+            diff_series = diff_series.clip(lower=0)  # Forzar valores no negativos
+            consumo_mensual_litros = diff_series.sum()
 
-            st.session_state.consumo_mensual = max(0, consumo_mensual_litros)  # Forzar no negativo
-            st.session_state.porcentaje_mensual = (st.session_state.consumo_mensual / 15000) * 100
+            st.session_state.consumo_mensual = consumo_mensual_litros
+            st.session_state.porcentaje_mensual = (consumo_mensual_litros / 15000) * 100
 
-            # Datos para gráfica (días y consumo acumulado)
+            # Datos para gráfica
             dias = df_month.index.day.tolist()
-            # Consumo acumulado relativo al primer día del mes
-            consumo_por_dia = (df_month - df_month.iloc[0]).tolist()
+            consumo_por_dia = diff_series.cumsum().tolist()  # Acumulado correcto
 
             st.session_state.dias_mes = dias
             st.session_state.consumo_por_dia = consumo_por_dia
@@ -84,7 +83,7 @@ def cargar_datos():
             st.session_state.consumo_por_dia = []
 
     except Exception as e:
-        st.session_state.error_msg = "Error al cargar datos"
+        st.session_state.error_msg = "Error al cargar datos del sensor"
 
 cargar_datos()
 
