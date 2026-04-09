@@ -13,7 +13,7 @@ st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
 st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
-# Configuración
+# Configuración correo
 EMAIL_FROM = 'joshinanlo@gmail.com'
 EMAIL_TO = 'joshinanlo@gmail.com'
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
@@ -29,13 +29,13 @@ if 'consumo_mensual' not in st.session_state:
     st.session_state.error_msg = ""
 
 # Función alerta
-def enviar_alerta(tipo="fuga"):
+def enviar_alerta():
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
-        body = f"{tipo.capitalize()} detectada.\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise urgentemente."
-        msg['Subject'] = f"{'🚨' if tipo=='fuga' else '⚠️'} Alerta"
+        body = f"Alerta detectada.\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³ ({st.session_state.porcentaje_mensual:.1f}%)\nRevise urgentemente."
+        msg['Subject'] = "🚨 Alerta de Consumo"
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
@@ -46,7 +46,7 @@ def enviar_alerta(tipo="fuga"):
     except:
         st.error("No se pudo enviar la alerta")
 
-# Carga de datos
+# Carga de datos con manejo de resets
 @st.cache_data(ttl=300)
 def cargar_datos():
     try:
@@ -62,14 +62,16 @@ def cargar_datos():
         df_month = series[series.index >= first_day]
 
         if not df_month.empty:
-            consumo_inicial = df_month.iloc[0]
-            consumo_final = df_month.iloc[-1]
-            consumo_mensual_litros = max(0, consumo_final - consumo_inicial)
-            st.session_state.consumo_mensual = consumo_mensual_litros
-            st.session_state.porcentaje_mensual = (consumo_mensual_litros / 15000) * 100
+            # Cálculo seguro contra resets y valores negativos
+            diff = df_month.diff().fillna(0)
+            diff = diff.clip(lower=0)                    # Evita negativos
+            consumo_mensual = diff.sum()
+
+            st.session_state.consumo_mensual = consumo_mensual
+            st.session_state.porcentaje_mensual = (consumo_mensual / 15000) * 100
 
             dias = df_month.index.day.tolist()
-            consumo_por_dia = (df_month - consumo_inicial).clip(lower=0).tolist()
+            consumo_por_dia = diff.cumsum().tolist()     # Acumulado correcto
 
             st.session_state.dias_mes = dias
             st.session_state.consumo_por_dia = consumo_por_dia
@@ -80,7 +82,7 @@ def cargar_datos():
             st.session_state.consumo_por_dia = []
 
     except Exception as e:
-        st.session_state.error_msg = "Error al cargar datos del sensor"
+        st.session_state.error_msg = "Error al cargar datos"
 
 cargar_datos()
 
@@ -92,66 +94,32 @@ col2.metric("Porcentaje usado", f"{st.session_state.porcentaje_mensual:.1f}%")
 if st.session_state.error_msg:
     st.error(st.session_state.error_msg)
 
-# Gráfica 1: Consumo mensual por día
+# Gráfica principal: Consumo mensual por día
 if st.session_state.dias_mes:
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
         x=st.session_state.dias_mes,
         y=[c / 1000 for c in st.session_state.consumo_por_dia],
         mode='lines+markers',
         name='Consumo acumulado',
         line=dict(color='royalblue'),
-        marker=dict(size=8, color='darkblue')
+        marker=dict(size=8)
     ))
-    fig1.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
-    fig1.update_layout(
+    fig.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
+    fig.update_layout(
         title="Consumo Acumulado del Mes Actual (m³)",
         xaxis_title="Día del mes",
         yaxis_title="Volumen acumulado (m³)",
         xaxis=dict(tickmode='linear', dtick=1),
-        height=500
+        height=550
     )
-    st.plotly_chart(fig1, use_container_width=True)
-
-# Gráfica 2: Entrenamiento + alertas
-st.subheader("Entrenamiento del modelo y alertas detectadas")
-
-epochs = list(range(1, 31))
-loss = [0.8 / (e + 1) + np.random.normal(0, 0.02) for e in epochs]
-
-fig2 = go.Figure()
-fig2.add_trace(go.Scatter(
-    x=epochs,
-    y=loss,
-    mode='lines',
-    name='Pérdida durante entrenamiento',
-    line=dict(color='green')
-))
-
-dia_actual = datetime.now().day
-dias_alerta = np.random.choice(range(1, dia_actual + 1), size=min(3, dia_actual), replace=False)
-for dia in dias_alerta:
-    fig2.add_vline(x=dia, line_dash="dot", line_color="red", annotation_text=f"Alerta día {dia}")
-
-fig2.update_layout(
-    title="Pérdida del entrenamiento y alertas detectadas",
-    xaxis_title="Épocas (izquierda) / Días del mes (derecha)",
-    yaxis_title="Pérdida (loss)",
-    height=500
-)
-st.plotly_chart(fig2, use_container_width=True)
-
-# Descripción detallada de la segunda gráfica
-st.markdown("""
-**Explicación de la segunda gráfica:**  
-La curva verde muestra cómo disminuye el error (pérdida o loss) durante el entrenamiento del modelo LSTM Autoencoder. Esto indica que el modelo está aprendiendo correctamente los patrones normales de consumo de agua en la vivienda.  
-
-Las líneas verticales rojas indican los días del mes en los que se detectó una posible anomalía o fuga (cuando el error de reconstrucción superó el umbral definido). Cada línea roja representa un evento que activó una alerta para revisión.
-""")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No hay datos suficientes para mostrar la gráfica.")
 
 # Botón de prueba
 if st.button("Enviar alerta de prueba por correo"):
-    enviar_alerta(tipo="fuga")
+    enviar_alerta()
     st.success("Alerta enviada")
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
