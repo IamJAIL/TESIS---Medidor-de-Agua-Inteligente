@@ -95,7 +95,7 @@ if st.session_state.dias_mes:
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# Gráfica 2: Análisis histórico
+# Gráfica 2: Histórico completo
 st.subheader("Análisis Histórico Completo y Alertas")
 
 fig2 = go.Figure()
@@ -103,15 +103,16 @@ fig2.add_trace(go.Scatter(
     x=df_total.index,
     y=df_total['total_liters'],
     mode='lines',
-    name='Consumo Histórico Total',
+    name='Consumo Histórico',
     line=dict(color='blue')
 ))
 
-# Alertas simuladas
-alert_days = [8, 12, 18, 25]
-for day in alert_days:
-    fig2.add_vline(x=pd.Timestamp(f"2026-04-{day:02d}"), line_dash="dot", line_color="red", 
-                   annotation_text="🚨 Alerta")
+# Alertas simuladas (usando fechas reales del dataset)
+alert_dates = pd.to_datetime(['2025-03-08', '2025-03-15', '2025-04-05', '2025-04-20'])
+for alert_date in alert_dates:
+    if alert_date in df_total.index:
+        fig2.add_vline(x=alert_date, line_dash="dot", line_color="red", 
+                       annotation_text="🚨 Alerta")
 
 fig2.update_layout(
     title="Consumo Histórico Completo desde Febrero",
@@ -124,7 +125,7 @@ st.plotly_chart(fig2, use_container_width=True)
 # Descripción
 st.markdown("""
 **Explicación de la segunda gráfica:**  
-Esta gráfica muestra **todo el historial de consumo** registrado desde el 20 de febrero hasta hoy.  
+Esta gráfica muestra **todo el historial de consumo** desde el 20 de febrero hasta la fecha actual.  
 Las líneas verticales rojas indican los días en los que se detectaron anomalías y se enviaron alertas por correo electrónico.
 """)
 
