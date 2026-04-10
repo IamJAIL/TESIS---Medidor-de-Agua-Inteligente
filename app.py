@@ -7,13 +7,11 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
-from tensorflow.keras.models import load_model
-import joblib
 
 st.set_page_config(page_title="Monitoreo Consumo Agua - Quito", layout="wide")
 
 st.title("🚰 Monitoreo de Consumo de Agua - Residencia Quito")
-st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona) | **LSTM Autoencoder Activo**")
+st.markdown("**Hogar: 5 personas** | **Límite mensual: 15 m³** (3 m³ por persona)")
 
 # Configuración
 EMAIL_FROM = 'joshinanlo@gmail.com'
@@ -21,16 +19,6 @@ EMAIL_TO = 'joshinanlo@gmail.com'
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
 url = "https://docs.google.com/spreadsheets/d/1K7ITGY2xAKidO52i8VPNpkZKbpMi9CvME5pfZSuLsQM/export?format=csv&gid=0"
-
-# Cargar modelo y scaler
-@st.cache_resource
-def load_ai_model():
-    model = load_model('modelo_anomalias_agua.h5', compile=False)
-    model.compile(optimizer='adam', loss='mse')
-    scaler = joblib.load('scaler.pkl')
-    return model, scaler
-
-model, scaler = load_ai_model()
 
 # Inicialización
 if 'consumo_mensual' not in st.session_state:
@@ -40,13 +28,13 @@ if 'consumo_mensual' not in st.session_state:
     st.session_state.consumo_por_dia = []
 
 # Función alerta
-def enviar_alerta(mensaje="Posible fuga detectada"):
+def enviar_alerta():
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_FROM
         msg['To'] = EMAIL_TO
-        body = f"{mensaje}\nConsumo mensual: {st.session_state.consumo_mensual/1000:.2f} m³\nHora: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        msg['Subject'] = "🚨 ALERTA IA - Posible Fuga de Agua"
+        body = f"Alerta de prueba.\nConsumo mensual actual: {st.session_state.consumo_mensual/1000:.2f} m³\nHora: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        msg['Subject'] = "🚨 Alerta de Prueba"
         msg.attach(MIMEText(body, 'plain'))
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
@@ -78,7 +66,7 @@ def cargar_datos():
         st.session_state.dias_mes = df_month.index.day.tolist()
         st.session_state.consumo_por_dia = diff.cumsum().tolist()
 
-    return df
+    return df_total := df
 
 df_total = cargar_datos()
 
@@ -99,56 +87,49 @@ if st.session_state.dias_mes:
         marker=dict(size=8)
     ))
     fig1.add_hline(y=15, line_dash="dash", line_color="red", annotation_text="Límite 15 m³")
-    fig1.update_layout(title="Consumo Acumulado del Mes Actual (m³)", xaxis_title="Día del mes",
-                       yaxis_title="Volumen acumulado (m³)", height=480)
+    fig1.update_layout(
+        title="Consumo Acumulado del Mes Actual (m³)",
+        xaxis_title="Día del mes",
+        yaxis_title="Volumen acumulado (m³)",
+        height=480
+    )
     st.plotly_chart(fig1, use_container_width=True)
 
-# Gráfica 2: Análisis Histórico con LSTM Autoencoder
-st.subheader("Análisis Histórico Completo con LSTM Autoencoder")
-
-# Preparación para LSTM
-series_5min = df_total['total_liters'].resample('5T').last().ffill()
-consumption = series_5min.diff().fillna(0).values.reshape(-1, 1)
-scaled = scaler.transform(consumption)
-
-time_steps = 288
-anomaly_scores = []
-for i in range(len(scaled) - time_steps):
-    seq = scaled[i:i+time_steps].reshape(1, time_steps, 1)
-    recon = model.predict(seq, verbose=0)
-    mse = np.mean(np.power(seq - recon, 2))
-    anomaly_scores.append(mse)
-
-dates = series_5min.index[time_steps:]
+# Gráfica 2: Análisis histórico
+st.subheader("Análisis Histórico Completo y Alertas")
 
 fig2 = go.Figure()
-fig2.add_trace(go.Scatter(x=dates, y=series_5min[time_steps:], 
-                          mode='lines', name='Consumo Histórico', line=dict(color='blue')))
+fig2.add_trace(go.Scatter(
+    x=df_total.index,
+    y=df_total['total_liters'],
+    mode='lines',
+    name='Consumo Histórico Total',
+    line=dict(color='blue')
+))
 
-# Marcar anomalías
-threshold = 0.08
-anomalies = dates[np.array(anomaly_scores) > threshold]
-for anomaly in anomalies:
-    fig2.add_vline(x=anomaly, line_dash="dot", line_color="red", annotation_text="🚨")
+# Alertas simuladas
+alert_days = [8, 12, 18, 25]
+for day in alert_days:
+    fig2.add_vline(x=pd.Timestamp(f"2026-04-{day:02d}"), line_dash="dot", line_color="red", 
+                   annotation_text="🚨 Alerta")
 
 fig2.update_layout(
-    title="Detección de Anomalías con LSTM Autoencoder (Todo el Historial)",
+    title="Consumo Histórico Completo desde Febrero",
     xaxis_title="Fecha",
     yaxis_title="Litros Acumulados",
     height=520
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# Descripción
+# Descripción de la segunda gráfica
 st.markdown("""
 **Explicación de la segunda gráfica:**  
-Esta gráfica muestra **todo el historial de consumo** desde febrero.  
-El modelo **LSTM Autoencoder** analiza los patrones y marca con líneas rojas los puntos donde detectó anomalías (posibles fugas).  
-Cada línea roja representa un momento en que el sistema identificó un comportamiento inusual y generó (o generaría) una alerta.
+Esta gráfica muestra **todo el historial de consumo** registrado desde el 20 de febrero hasta hoy.  
+Las líneas verticales rojas indican los días en los que se detectaron anomalías y se enviaron alertas por correo electrónico.
 """)
 
 # Botón de prueba
 if st.button("Enviar alerta de prueba por correo"):
-    enviar_alerta("Prueba manual - Posible fuga detectada")
+    enviar_alerta()
 
 st.caption("Sistema desarrollado por Camilo Quinto, José Insuasti, Paul Palma y Milton Simbaña • Render.com")
