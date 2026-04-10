@@ -66,7 +66,7 @@ def cargar_datos():
         st.session_state.dias_mes = df_month.index.day.tolist()
         st.session_state.consumo_por_dia = diff.cumsum().tolist()
 
-    return df_total := df
+    return df
 
 df_total = cargar_datos()
 
@@ -121,7 +121,7 @@ fig2.update_layout(
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-# Descripción de la segunda gráfica
+# Descripción
 st.markdown("""
 **Explicación de la segunda gráfica:**  
 Esta gráfica muestra **todo el historial de consumo** registrado desde el 20 de febrero hasta hoy.  
