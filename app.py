@@ -56,5 +56,3 @@ st.dataframe(data.style.format({
 }), use_container_width=True)
 
 st.success("✅ The consumption is within the recommended monthly limit.")
-
-st.caption("Example Data • Water Consumption Monitoring System")
